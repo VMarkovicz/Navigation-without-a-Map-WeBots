@@ -28,7 +28,7 @@ MAX_W = 1.5  # rad/s
 
 # counter: used to maintain an active state for a number of cycles
 counter = 0
-COUNTER_MAX = 100  # minimum time before checking alignment
+COUNTER_MAX = 50  # minimum time before checking alignment
 COUNTER_BEF_TURN = 3 # wait time before deciding turn
 
 # Robot wheel speeds
@@ -244,16 +244,16 @@ while robot.step(timestep) != -1:
         w_d = 0.0   
 
     if current_state == 'turn_left':
-        u_d = 0.5
-        w_d = 5.5  # turn left
+        u_d = 0.45
+        w_d = 10.0  # turn left
 
     if current_state == 'turn_right':
-        u_d = 0.5
-        w_d = -5.5  # turn right
+        u_d = 0.45
+        w_d = -10.0  # turn right
 
     if current_state == 'turn_around':
         u_d = 0.0
-        w_d = 11.0  # turn 180°
+        w_d = 18.0  # turn 180°
 
     if current_state == 'backward':
         u_d = -0.5
