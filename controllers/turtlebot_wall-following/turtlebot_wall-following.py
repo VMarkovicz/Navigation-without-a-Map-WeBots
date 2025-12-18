@@ -23,13 +23,13 @@ delta_t = robot.getBasicTimeStep()/1000.0    # [s]
 states = ['forward', 'decide_turn', 'turn_left', 'turn_right', 'turn_around', 'backward', 'stop']
 current_state = states[0]
 
-MAX_W = 2.0  # rad/s
+MAX_W = 1.5  # rad/s
 
 
 # counter: used to maintain an active state for a number of cycles
 counter = 0
-COUNTER_MAX = 100
-COUNTER_BEF_TURN = 30
+COUNTER_MAX = 20  # minimum time before checking alignment
+COUNTER_BEF_TURN = 10  # wait time before deciding turn
 
 # Robot wheel speeds
 wl = 0.0    # angular speed of the left wheel [rad/s]
@@ -116,7 +116,7 @@ def get_robot_speeds(wl, wr, R, D):
     
     return u, w
 
-def avg_distance(pointCloud, center, angle_range=4):
+def avg_distance(pointCloud, center, angle_range=5):
     """Computes the average distance to an obstacle in a given sector of the LiDAR data"""
     
     start = center - angle_range // 2
@@ -133,7 +133,7 @@ def avg_distance(pointCloud, center, angle_range=4):
     # w_desired = np.clip(w_desired, -MAX_W, MAX_W)
 
     if result == float('inf'):
-        return 0.0001
+        return 0
     return result
 
 
@@ -153,17 +153,18 @@ def corridor_following_control(RIGHT_Distance, LEFT_Distance, u_desired = 1.5, k
 
     return u_desired, w_desired
 
-def corridor_following_control_angle(LEFT_Distance, RIGHT_Distance, LEFT_Angle, RIGHT_Angle, u_desired = 1.5, k_linear = 1.5, k_angular = 20.0, dead_zone = 0.05):
+def corridor_following_control_angle(LEFT_Distance, RIGHT_Distance, LEFT_Angle, RIGHT_Angle, u_desired = 2.0, k_linear = 2.5, k_angular = 20.0, dead_zone = 0.1):
         # Wall-following on both sides
         lat_error = LEFT_Distance - RIGHT_Distance
         angular_error = RIGHT_Angle - LEFT_Angle
+        
+        if abs(angular_error) > 0.4: angular_error = 0
 
         if abs(lat_error) < 0.125:
             w_desired = k_angular * angular_error * 25.0  # 3x more aggressive on angle!
         else:
-            if abs(angular_error) > 0.7: angular_error = 0
 
-            if (abs(lat_error) < dead_zone) or (abs(lat_error) > 0.75):
+            if (abs(lat_error) < dead_zone) or (abs(lat_error) > 0.7):
                 lat_error = 0
 
             w_desired = k_linear * lat_error + k_angular * angular_error
@@ -198,7 +199,7 @@ while robot.step(timestep) != -1:
     # See every directions
     BACK_Distance = avg_distance(pointCloud, 0)     # South
     RIGHT_Distance = avg_distance(pointCloud, 270)    # East
-    FRONT_Distance = avg_distance(pointCloud, 180)   # North
+    FRONT_Distance = avg_distance(pointCloud, 180, angle_range=20)   # North
     LEFT_Distance = avg_distance(pointCloud, 90)   # West
     # print(f'Distances: FRONT={FRONT_Distance:.2f} m, RIGHT={RIGHT_Distance:.2f} m, BACK={BACK_Distance:.2f} m, LEFT={LEFT_Distance:.2f} m')
 
@@ -271,43 +272,60 @@ while robot.step(timestep) != -1:
         #     counter = 0
 
     if current_state == 'decide_turn':
-        # left_clear = LEFT_Distance > 0.8
-        # right_clear = RIGHT_Distance > 0.8
-
-        # if left_clear and right_clear:
-        #     current_state = 'turn_right'  # prefer right (right-hand rule)
-        # elif right_clear:
-        #     current_state = 'turn_right'
-        # elif left_clear:
-        #     current_state = 'turn_left'
-        # # else:
-        #     # current_state = 'turn_around'  # dead end
-        # counter = 0
-
-        # New decision logic
-        if RIGHT_Distance >= LEFT_Distance:
-            current_state = 'turn_right'
-        else:
-            current_state = 'turn_left'
-        counter = 0
-        
-
-
-    
-    # if current_state == 'turn':
-    #     if counter >= COUNTER_MAX:
-    #         current_state = 'forward'
-
+        # Wait for stable readings
+        if counter > 3:
+            THRESHOLD_OPEN = 0.35  # minimum clear distance
+            
+            left_open = LEFT_Distance > THRESHOLD_OPEN
+            right_open = RIGHT_Distance > THRESHOLD_OPEN
+            front_open = FRONT_Distance > THRESHOLD_OPEN
+            
+            print(f'  >> DECISION: L={LEFT_Distance:.2f}[{left_open}] R={RIGHT_Distance:.2f}[{right_open}] F={FRONT_Distance:.2f}[{front_open}]')
+            
+            # IMPROVED DECISION LOGIC
+            if front_open and FRONT_Distance > 0.4:
+                # False alarm, front is clear
+                current_state = 'forward'
+                print('  >> Front clear - CONTINUE FORWARD')
+            elif not left_open and not right_open and not front_open:
+                # TRUE DEAD END - turn around
+                current_state = 'turn_around'
+                print('  >> DEAD END - TURN AROUND')
+            elif left_open and right_open:
+                # Both open - choose better path
+                if RIGHT_Distance > LEFT_Distance + 0.2:
+                    current_state = 'turn_right'
+                    print(f'  >> Both open - RIGHT better ({RIGHT_Distance:.2f} > {LEFT_Distance:.2f})')
+                elif LEFT_Distance > RIGHT_Distance + 0.2:
+                    current_state = 'turn_left'
+                    print(f'  >> Both open - LEFT better ({LEFT_Distance:.2f} > {RIGHT_Distance:.2f})')
+                else:
+                    # Similar - use right-hand rule
+                    current_state = 'turn_right'
+                    print('  >> Both open similar - RIGHT (right-hand rule)')
+            elif right_open:
+                current_state = 'turn_right'
+                print('  >> Only RIGHT open')
+            elif left_open:
+                current_state = 'turn_left'
+                print('  >> Only LEFT open')
+            else:
+                # Shouldn't reach here, but turn around just in case
+                current_state = 'turn_around'
+                print('  >> Fallback - TURN AROUND')
+            
+            counter = 0
+            
 
     if current_state == 'turn_left':
         if counter >= COUNTER_MAX:  # completed turn
             current_state = 'forward'
-            counter = 15
+            counter = 14
 
     if current_state == 'turn_right':
         if counter >= COUNTER_MAX:  # completed turn
             current_state = 'forward'
-            counter = 15
+            counter = 14
 
     if current_state == 'turn_around':
         if counter >= COUNTER_MAX:  # 180° takes longer
