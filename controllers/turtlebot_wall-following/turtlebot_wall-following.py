@@ -28,8 +28,8 @@ MAX_W = 1.5  # rad/s
 
 # counter: used to maintain an active state for a number of cycles
 counter = 0
-COUNTER_MAX = 20  # minimum time before checking alignment
-COUNTER_BEF_TURN = 10  # wait time before deciding turn
+COUNTER_MAX = 100  # minimum time before checking alignment
+COUNTER_BEF_TURN = 3 # wait time before deciding turn
 
 # Robot wheel speeds
 wl = 0.0    # angular speed of the left wheel [rad/s]
@@ -244,16 +244,16 @@ while robot.step(timestep) != -1:
         w_d = 0.0   
 
     if current_state == 'turn_left':
-        u_d = 0.0
+        u_d = 0.5
         w_d = 5.5  # turn left
 
     if current_state == 'turn_right':
-        u_d = 0.0
+        u_d = 0.5
         w_d = -5.5  # turn right
 
     if current_state == 'turn_around':
         u_d = 0.0
-        w_d = 12.0  # turn 180°
+        w_d = 11.0  # turn 180°
 
     if current_state == 'backward':
         u_d = -0.5
@@ -262,7 +262,7 @@ while robot.step(timestep) != -1:
 
     # ========== TRANSITIONS: When to change state ==========
     if current_state == 'forward':
-        if FRONT_Distance < 0.22:
+        if FRONT_Distance < 0.25:
             if counter >= COUNTER_BEF_TURN:
                 current_state = 'decide_turn'
                 counter = 0
@@ -272,65 +272,63 @@ while robot.step(timestep) != -1:
         #     counter = 0
 
     if current_state == 'decide_turn':
-        # Wait for stable readings
-        if counter > 3:
-            THRESHOLD_OPEN = 0.35  # minimum clear distance
-            
-            left_open = LEFT_Distance > THRESHOLD_OPEN
-            right_open = RIGHT_Distance > THRESHOLD_OPEN
-            front_open = FRONT_Distance > THRESHOLD_OPEN
-            
-            print(f'  >> DECISION: L={LEFT_Distance:.2f}[{left_open}] R={RIGHT_Distance:.2f}[{right_open}] F={FRONT_Distance:.2f}[{front_open}]')
-            
-            # IMPROVED DECISION LOGIC
-            if front_open and FRONT_Distance > 0.4:
-                # False alarm, front is clear
-                current_state = 'forward'
-                print('  >> Front clear - CONTINUE FORWARD')
-            elif not left_open and not right_open and not front_open:
-                # TRUE DEAD END - turn around
-                current_state = 'turn_around'
-                print('  >> DEAD END - TURN AROUND')
-            elif left_open and right_open:
-                # Both open - choose better path
-                if RIGHT_Distance > LEFT_Distance + 0.2:
-                    current_state = 'turn_right'
-                    print(f'  >> Both open - RIGHT better ({RIGHT_Distance:.2f} > {LEFT_Distance:.2f})')
-                elif LEFT_Distance > RIGHT_Distance + 0.2:
-                    current_state = 'turn_left'
-                    print(f'  >> Both open - LEFT better ({LEFT_Distance:.2f} > {RIGHT_Distance:.2f})')
-                else:
-                    # Similar - use right-hand rule
-                    current_state = 'turn_right'
-                    print('  >> Both open similar - RIGHT (right-hand rule)')
-            elif right_open:
+        THRESHOLD_OPEN = 0.3  # minimum clear distance
+        
+        left_open = LEFT_Distance > THRESHOLD_OPEN
+        right_open = RIGHT_Distance > THRESHOLD_OPEN
+        front_open = FRONT_Distance > THRESHOLD_OPEN
+        
+        print(f'  >> DECISION: L={LEFT_Distance:.2f}[{left_open}] R={RIGHT_Distance:.2f}[{right_open}] F={FRONT_Distance:.2f}[{front_open}]')
+        
+        # IMPROVED DECISION LOGIC
+        if front_open and FRONT_Distance > 0.4:
+            # False alarm, front is clear
+            current_state = 'forward'
+            print('  >> Front clear - CONTINUE FORWARD')
+        # elif not left_open and not right_open and not front_open:
+        #     # TRUE DEAD END - turn around
+        #     current_state = 'turn_around'
+        #     print('  >> DEAD END - TURN AROUND')
+        elif left_open and right_open:
+            # Both open - choose better path
+            if RIGHT_Distance > LEFT_Distance:
                 current_state = 'turn_right'
-                print('  >> Only RIGHT open')
-            elif left_open:
+                print(f'  >> Both open - RIGHT better ({RIGHT_Distance:.2f} > {LEFT_Distance:.2f})')
+            elif LEFT_Distance > RIGHT_Distance:
                 current_state = 'turn_left'
-                print('  >> Only LEFT open')
+                print(f'  >> Both open - LEFT better ({LEFT_Distance:.2f} > {RIGHT_Distance:.2f})')
             else:
-                # Shouldn't reach here, but turn around just in case
-                current_state = 'turn_around'
-                print('  >> Fallback - TURN AROUND')
-            
-            counter = 0
+                # Similar - use right-hand rule
+                current_state = 'turn_right'
+                print('  >> Both open similar - RIGHT (right-hand rule)')
+        elif right_open:
+            current_state = 'turn_right'
+            print('  >> Only RIGHT open')
+        elif left_open:
+            current_state = 'turn_left'
+            print('  >> Only LEFT open')
+        else:
+            # Shouldn't reach here, but turn around just in case
+            current_state = 'turn_around'
+            print('  >> Fallback - TURN AROUND')
+        
+        counter = 0
             
 
     if current_state == 'turn_left':
         if counter >= COUNTER_MAX:  # completed turn
             current_state = 'forward'
-            counter = 14
+            counter = 0
 
     if current_state == 'turn_right':
         if counter >= COUNTER_MAX:  # completed turn
             current_state = 'forward'
-            counter = 14
+            counter = 0
 
     if current_state == 'turn_around':
         if counter >= COUNTER_MAX:  # 180° takes longer
             current_state = 'forward'
-            counter = 5
+            counter = 0
 
     # increment counter
     counter += 1

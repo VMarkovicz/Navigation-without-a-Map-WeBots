@@ -5,7 +5,7 @@ sceneTreePerspectives: 000000ff000000010000000300000022000000c0000000fa010000000
 maximizedDockId: -1
 centralWidgetVisible: 1
 projectionMode: ORTHOGRAPHIC
-orthographicViewHeight: 3.71309
-textFiles: 0 "controllers/turtlebot_wall-following/turtlebot_wall-following.py"
+orthographicViewHeight: 2.19254
+textFiles: 0 "turtlebot_wall-following.py"
 globalOptionalRendering: LidarPointClouds
 consoles: Console:All:All
