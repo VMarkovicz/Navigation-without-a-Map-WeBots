@@ -253,7 +253,7 @@ while robot.step(timestep) != -1:
 
     if current_state == 'turn_around':
         u_d = 0.0
-        w_d = 18.0  # turn 180°
+        w_d = 18.5  # turn 180°
 
     if current_state == 'backward':
         u_d = -0.5
