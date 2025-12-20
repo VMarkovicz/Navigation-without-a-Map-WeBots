@@ -13,7 +13,7 @@ MAX_SPEED = 40 #6.28
 
 # create the Robot instance.
 robot = Robot()
-pulses_per_turn = 4096    # number of pulses per wheel turn (encoder resolution)
+pulses_per_turn = 72    # number of pulses per wheel turn (encoder resolution)
 
 # get the time step of the current world.
 timestep = int(robot.getBasicTimeStep())   # [ms]
@@ -23,13 +23,14 @@ delta_t = robot.getBasicTimeStep()/1000.0    # [s]
 states = ['forward', 'decide_turn', 'turn_left', 'turn_right', 'turn_around', 'backward', 'stop']
 current_state = states[0]
 
-MAX_W = 2.0  # rad/s
+MAX_W = 1.5  # rad/s
 
 
 # counter: used to maintain an active state for a number of cycles
 counter = 0
-COUNTER_MAX = 100
-COUNTER_BEF_TURN = 30
+COUNTER_MAX = 50  # minimum time before checking alignment
+COUNTER_BEF_TURN = 3 # wait time before deciding turn
+TURN_AROUND_LAST_MOVE = 0 
 
 # Robot wheel speeds
 wl = 0.0    # angular speed of the left wheel [rad/s]
@@ -47,6 +48,11 @@ D = 0.160    # distance between the wheels [m]
 # higher controller gain will result in faster reaction, but it can cause oscillations
 k_1 = 1
 k_2 = 1
+
+# ADD: Robot pose tracking
+x = 0.0      # x position [m]
+y = 0.0      # y position [m]
+phi = 0.0    # orientation [rad]
 
 #-------------------------------------------------------
 # Initialize devices
@@ -73,7 +79,6 @@ leftMotor.setPosition(float('inf'))
 rightMotor.setPosition(float('inf'))
 leftMotor.setVelocity(0.0)
 rightMotor.setVelocity(0.0)
-
 
 #######################################################################
 # Functions
@@ -116,7 +121,7 @@ def get_robot_speeds(wl, wr, R, D):
     
     return u, w
 
-def avg_distance(pointCloud, center, angle_range=4):
+def avg_distance(pointCloud, center, angle_range=5):
     """Computes the average distance to an obstacle in a given sector of the LiDAR data"""
     
     start = center - angle_range // 2
@@ -133,7 +138,7 @@ def avg_distance(pointCloud, center, angle_range=4):
     # w_desired = np.clip(w_desired, -MAX_W, MAX_W)
 
     if result == float('inf'):
-        return 0.0001
+        return 0
     return result
 
 
@@ -153,24 +158,25 @@ def corridor_following_control(RIGHT_Distance, LEFT_Distance, u_desired = 1.5, k
 
     return u_desired, w_desired
 
-def corridor_following_control_angle(LEFT_Distance, RIGHT_Distance, LEFT_Angle, RIGHT_Angle, u_desired = 1.5, k_linear = 1.5, k_angular = 20.0, dead_zone = 0.05):
+def corridor_following_control_angle(LEFT_Distance, RIGHT_Distance, LEFT_Angle, RIGHT_Angle, u_desired = 2.0, k_linear = 2.5, k_angular = 20.0, dead_zone = 0.1):
         # Wall-following on both sides
         lat_error = LEFT_Distance - RIGHT_Distance
         angular_error = RIGHT_Angle - LEFT_Angle
+        
+        if abs(angular_error) > 0.4: angular_error = 0
 
         if abs(lat_error) < 0.125:
             w_desired = k_angular * angular_error * 25.0  # 3x more aggressive on angle!
         else:
-            if abs(angular_error) > 0.7: angular_error = 0
 
-            if (abs(lat_error) < dead_zone) or (abs(lat_error) > 0.75):
+            if (abs(lat_error) < dead_zone) or (abs(lat_error) > 0.7):
                 lat_error = 0
 
             w_desired = k_linear * lat_error + k_angular * angular_error
 
         w_desired = np.clip(w_desired, -MAX_W, MAX_W)
 
-        print(f'Corridor following: LEFT_Distance = {LEFT_Distance:.2f} m, RIGHT_Distance = {RIGHT_Distance:.2f} m, LEFT_Angle = {LEFT_Angle:.2f} rad, RIGHT_Angle = {RIGHT_Angle:.2f} rad, w_d = {w_desired:.2f} rad/s, lat_error = {lat_error:.2f} m, angular_error = {angular_error:.2f} rad.')
+        # print(f'Corridor following: LEFT_Distance = {LEFT_Distance:.2f} m, RIGHT_Distance = {RIGHT_Distance:.2f} m, LEFT_Angle = {LEFT_Angle:.2f} rad, RIGHT_Angle = {RIGHT_Angle:.2f} rad, w_d = {w_desired:.2f} rad/s, lat_error = {lat_error:.2f} m, angular_error = {angular_error:.2f} rad.')
 
         return u_desired, w_desired
 
@@ -186,6 +192,23 @@ def relative_angle(x1, y1, x2, y2):
     angle = np.arctan2(y2 - y1, x2 - x1)
     return angle
 
+def robot_position(u, w, x_old, y_old, phi_old, delta_t = 0.032):
+    # Calculate displacement using OLD orientation (before updating phi)
+    delta_phi = w * delta_t
+    phi = phi_old + delta_phi
+    
+    if phi >= np.pi:
+        phi = phi - 2*np.pi
+    elif phi < -np.pi:
+        phi = phi + 2*np.pi
+
+    delta_x = u * np.cos(phi) * delta_t
+    delta_y = u * np.sin(phi) * delta_t
+    x = x_old + delta_x
+    y = y_old + delta_y
+    
+    return x, y, phi
+
 #######################################################################
 # Main loop: See-think-act cycle
 # Perform simulation steps until Webots is stopping the controller
@@ -198,7 +221,7 @@ while robot.step(timestep) != -1:
     # See every directions
     BACK_Distance = avg_distance(pointCloud, 0)     # South
     RIGHT_Distance = avg_distance(pointCloud, 270)    # East
-    FRONT_Distance = avg_distance(pointCloud, 180)   # North
+    FRONT_Distance = avg_distance(pointCloud, 180, angle_range=20)   # North
     LEFT_Distance = avg_distance(pointCloud, 90)   # West
     # print(f'Distances: FRONT={FRONT_Distance:.2f} m, RIGHT={RIGHT_Distance:.2f} m, BACK={BACK_Distance:.2f} m, LEFT={LEFT_Distance:.2f} m')
 
@@ -229,6 +252,9 @@ while robot.step(timestep) != -1:
     # print(f"Robot linear speed  = {u} m/s")
     # print(f"Robot angular speed = {w} rad/s")
 
+    x, y, phi = robot_position(u, w, x, y, phi)
+    print(f"Robot position: x = {x:.2f} m, y = {y:.2f} m, phi = {phi:.2f} rad ({np.degrees(phi):.1f}°)")
+
     #----------------------------- Think ---------------------------------
     # Implement the finite-state machine to select the robot behavior
 
@@ -243,16 +269,16 @@ while robot.step(timestep) != -1:
         w_d = 0.0   
 
     if current_state == 'turn_left':
-        u_d = 0.0
-        w_d = 5.5  # turn left
+        u_d = 0.45
+        w_d = 10.0  # turn left
 
     if current_state == 'turn_right':
-        u_d = 0.0
-        w_d = -5.5  # turn right
+        u_d = 0.45
+        w_d = -10.0  # turn right
 
     if current_state == 'turn_around':
         u_d = 0.0
-        w_d = 12.0  # turn 180°
+        w_d = 18.5  # turn 180°
 
     if current_state == 'backward':
         u_d = -0.5
@@ -261,58 +287,81 @@ while robot.step(timestep) != -1:
 
     # ========== TRANSITIONS: When to change state ==========
     if current_state == 'forward':
-        if FRONT_Distance < 0.22:
+        if FRONT_Distance < 0.25:
             if counter >= COUNTER_BEF_TURN:
                 current_state = 'decide_turn'
                 counter = 0
-
-        # if RIGHT_Distance > 2.5:
-        #     current_state = 'turn_right'
-        #     counter = 0
-
-    if current_state == 'decide_turn':
-        # left_clear = LEFT_Distance > 0.8
-        # right_clear = RIGHT_Distance > 0.8
-
-        # if left_clear and right_clear:
-        #     current_state = 'turn_right'  # prefer right (right-hand rule)
-        # elif right_clear:
-        #     current_state = 'turn_right'
-        # elif left_clear:
-        #     current_state = 'turn_left'
-        # # else:
-        #     # current_state = 'turn_around'  # dead end
-        # counter = 0
-
-        # New decision logic
-        if RIGHT_Distance >= LEFT_Distance:
-            current_state = 'turn_right'
-        else:
-            current_state = 'turn_left'
-        counter = 0
+        
+        if (LEFT_Distance > 0.5 or RIGHT_Distance > 0.5) and TURN_AROUND_LAST_MOVE == 1:
+            if counter >= COUNTER_BEF_TURN * 3:
+                current_state = 'decide_turn'
+                counter = 0
+                print('  >> OPEN SPACE AHEAD - DECIDE TURN')
         
 
-
-    
-    # if current_state == 'turn':
-    #     if counter >= COUNTER_MAX:
-    #         current_state = 'forward'
-
+    if current_state == 'decide_turn':
+        THRESHOLD_OPEN = 0.3  # minimum clear distance
+        
+        left_open = LEFT_Distance > THRESHOLD_OPEN
+        right_open = RIGHT_Distance > THRESHOLD_OPEN
+        front_open = FRONT_Distance > THRESHOLD_OPEN
+        
+        print(f'  >> DECISION: L={LEFT_Distance:.2f}[{left_open}] R={RIGHT_Distance:.2f}[{right_open}] F={FRONT_Distance:.2f}[{front_open}]')
+        
+        # IMPROVED DECISION LOGIC
+        if LEFT_Distance > 0.5 and FRONT_Distance > 0.5 and TURN_AROUND_LAST_MOVE == 1:
+            current_state = 'turn_left'
+            TURN_AROUND_LAST_MOVE = 0
+            print('  >> WIDE OPEN LEFT - TURN LEFT')
+        elif RIGHT_Distance > 0.5 and FRONT_Distance > 0.5 and TURN_AROUND_LAST_MOVE == 1:
+            current_state = 'turn_right'
+            TURN_AROUND_LAST_MOVE = 0
+            print('  >> WIDE OPEN RIGHT - TURN RIGHT')
+        elif front_open and FRONT_Distance > 0.4:
+            # False alarm, front is clear
+            current_state = 'forward'
+            print('  >> Front clear - CONTINUE FORWARD')
+        elif left_open and right_open:
+            # Both open - choose better path
+            if RIGHT_Distance > LEFT_Distance:
+                current_state = 'turn_right'
+                print(f'  >> Both open - RIGHT better ({RIGHT_Distance:.2f} > {LEFT_Distance:.2f})')
+            elif LEFT_Distance > RIGHT_Distance:
+                current_state = 'turn_left'
+                print(f'  >> Both open - LEFT better ({LEFT_Distance:.2f} > {RIGHT_Distance:.2f})')
+            else:
+                # Similar - use right-hand rule
+                current_state = 'turn_right'
+                print('  >> Both open similar - RIGHT (right-hand rule)')
+        elif right_open:
+            current_state = 'turn_right'
+            print('  >> Only RIGHT open')
+        elif left_open:
+            current_state = 'turn_left'
+            print('  >> Only LEFT open')
+        else:
+            # Shouldn't reach here, but turn around just in case
+            current_state = 'turn_around'
+            print('  >> Fallback - TURN AROUND')
+        
+        counter = 0
+            
 
     if current_state == 'turn_left':
         if counter >= COUNTER_MAX:  # completed turn
             current_state = 'forward'
-            counter = 15
+            counter = 0
 
     if current_state == 'turn_right':
         if counter >= COUNTER_MAX:  # completed turn
             current_state = 'forward'
-            counter = 15
+            counter = 0
 
     if current_state == 'turn_around':
         if counter >= COUNTER_MAX:  # 180° takes longer
             current_state = 'forward'
-            counter = 5
+            TURN_AROUND_LAST_MOVE = 1
+            counter = 0
 
     # increment counter
     counter += 1
@@ -326,9 +375,8 @@ while robot.step(timestep) != -1:
     leftMotor.setVelocity(leftSpeed)
     rightMotor.setVelocity(rightSpeed)
 
-    # Debug
-    # print(f'Current state = {current_state}, distances = {pointCloud[180]:.2f}, u_d = {u_d:.2f}, w_d = {w_d:.2f}')
+    # Debug print
     
-    print(f'Current state = {current_state}, Distances: FRONT={FRONT_Distance:.2f} m, RIGHT={RIGHT_Distance:.2f} m, Back={BACK_Distance:.2f} m, LEFT={LEFT_Distance:.2f} m')
-    # Repeat all steps while the simulation is running.
+    # print(f'Current state = {current_state}, Distances: FRONT={FRONT_Distance:.2f} m, RIGHT={RIGHT_Distance:.2f} m, Back={BACK_Distance:.2f} m, LEFT={LEFT_Distance:.2f} m')
+
 
