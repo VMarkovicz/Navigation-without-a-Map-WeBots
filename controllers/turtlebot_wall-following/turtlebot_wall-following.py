@@ -30,6 +30,7 @@ MAX_W = 1.5  # rad/s
 counter = 0
 COUNTER_MAX = 50  # minimum time before checking alignment
 COUNTER_BEF_TURN = 3 # wait time before deciding turn
+TURN_AROUND_LAST_MOVE = 0 
 
 # Robot wheel speeds
 wl = 0.0    # angular speed of the left wheel [rad/s]
@@ -266,10 +267,13 @@ while robot.step(timestep) != -1:
             if counter >= COUNTER_BEF_TURN:
                 current_state = 'decide_turn'
                 counter = 0
-
-        # if RIGHT_Distance > 2.5:
-        #     current_state = 'turn_right'
-        #     counter = 0
+        
+        if (LEFT_Distance > 0.5 or RIGHT_Distance > 0.5) and TURN_AROUND_LAST_MOVE == 1:
+            if counter >= COUNTER_BEF_TURN * 3:
+                current_state = 'decide_turn'
+                counter = 0
+                print('  >> OPEN SPACE AHEAD - DECIDE TURN')
+        
 
     if current_state == 'decide_turn':
         THRESHOLD_OPEN = 0.3  # minimum clear distance
@@ -281,14 +285,18 @@ while robot.step(timestep) != -1:
         print(f'  >> DECISION: L={LEFT_Distance:.2f}[{left_open}] R={RIGHT_Distance:.2f}[{right_open}] F={FRONT_Distance:.2f}[{front_open}]')
         
         # IMPROVED DECISION LOGIC
-        if front_open and FRONT_Distance > 0.4:
+        if LEFT_Distance > 0.5 and FRONT_Distance > 0.5 and TURN_AROUND_LAST_MOVE == 1:
+            current_state = 'turn_left'
+            TURN_AROUND_LAST_MOVE = 0
+            print('  >> WIDE OPEN LEFT - TURN LEFT')
+        elif RIGHT_Distance > 0.5 and FRONT_Distance > 0.5 and TURN_AROUND_LAST_MOVE == 1:
+            current_state = 'turn_right'
+            TURN_AROUND_LAST_MOVE = 0
+            print('  >> WIDE OPEN RIGHT - TURN RIGHT')
+        elif front_open and FRONT_Distance > 0.4:
             # False alarm, front is clear
             current_state = 'forward'
             print('  >> Front clear - CONTINUE FORWARD')
-        # elif not left_open and not right_open and not front_open:
-        #     # TRUE DEAD END - turn around
-        #     current_state = 'turn_around'
-        #     print('  >> DEAD END - TURN AROUND')
         elif left_open and right_open:
             # Both open - choose better path
             if RIGHT_Distance > LEFT_Distance:
@@ -328,6 +336,7 @@ while robot.step(timestep) != -1:
     if current_state == 'turn_around':
         if counter >= COUNTER_MAX:  # 180° takes longer
             current_state = 'forward'
+            TURN_AROUND_LAST_MOVE = 1
             counter = 0
 
     # increment counter
