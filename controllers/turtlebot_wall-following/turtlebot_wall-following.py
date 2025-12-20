@@ -13,7 +13,7 @@ MAX_SPEED = 40 #6.28
 
 # create the Robot instance.
 robot = Robot()
-pulses_per_turn = 4096    # number of pulses per wheel turn (encoder resolution)
+pulses_per_turn = 72    # number of pulses per wheel turn (encoder resolution)
 
 # get the time step of the current world.
 timestep = int(robot.getBasicTimeStep())   # [ms]
@@ -49,6 +49,11 @@ D = 0.160    # distance between the wheels [m]
 k_1 = 1
 k_2 = 1
 
+# ADD: Robot pose tracking
+x = 0.0      # x position [m]
+y = 0.0      # y position [m]
+phi = 0.0    # orientation [rad]
+
 #-------------------------------------------------------
 # Initialize devices
 
@@ -74,7 +79,6 @@ leftMotor.setPosition(float('inf'))
 rightMotor.setPosition(float('inf'))
 leftMotor.setVelocity(0.0)
 rightMotor.setVelocity(0.0)
-
 
 #######################################################################
 # Functions
@@ -172,7 +176,7 @@ def corridor_following_control_angle(LEFT_Distance, RIGHT_Distance, LEFT_Angle, 
 
         w_desired = np.clip(w_desired, -MAX_W, MAX_W)
 
-        print(f'Corridor following: LEFT_Distance = {LEFT_Distance:.2f} m, RIGHT_Distance = {RIGHT_Distance:.2f} m, LEFT_Angle = {LEFT_Angle:.2f} rad, RIGHT_Angle = {RIGHT_Angle:.2f} rad, w_d = {w_desired:.2f} rad/s, lat_error = {lat_error:.2f} m, angular_error = {angular_error:.2f} rad.')
+        # print(f'Corridor following: LEFT_Distance = {LEFT_Distance:.2f} m, RIGHT_Distance = {RIGHT_Distance:.2f} m, LEFT_Angle = {LEFT_Angle:.2f} rad, RIGHT_Angle = {RIGHT_Angle:.2f} rad, w_d = {w_desired:.2f} rad/s, lat_error = {lat_error:.2f} m, angular_error = {angular_error:.2f} rad.')
 
         return u_desired, w_desired
 
@@ -187,6 +191,23 @@ def distance_to_point(distance, sensor_angle):
 def relative_angle(x1, y1, x2, y2):
     angle = np.arctan2(y2 - y1, x2 - x1)
     return angle
+
+def robot_position(u, w, x_old, y_old, phi_old, delta_t = 0.032):
+    # Calculate displacement using OLD orientation (before updating phi)
+    delta_phi = w * delta_t
+    phi = phi_old + delta_phi
+    
+    if phi >= np.pi:
+        phi = phi - 2*np.pi
+    elif phi < -np.pi:
+        phi = phi + 2*np.pi
+
+    delta_x = u * np.cos(phi) * delta_t
+    delta_y = u * np.sin(phi) * delta_t
+    x = x_old + delta_x
+    y = y_old + delta_y
+    
+    return x, y, phi
 
 #######################################################################
 # Main loop: See-think-act cycle
@@ -230,6 +251,9 @@ while robot.step(timestep) != -1:
     u, w = get_robot_speeds(wl, wr, R, D)
     # print(f"Robot linear speed  = {u} m/s")
     # print(f"Robot angular speed = {w} rad/s")
+
+    x, y, phi = robot_position(u, w, x, y, phi)
+    print(f"Robot position: x = {x:.2f} m, y = {y:.2f} m, phi = {phi:.2f} rad ({np.degrees(phi):.1f}°)")
 
     #----------------------------- Think ---------------------------------
     # Implement the finite-state machine to select the robot behavior
@@ -351,9 +375,8 @@ while robot.step(timestep) != -1:
     leftMotor.setVelocity(leftSpeed)
     rightMotor.setVelocity(rightSpeed)
 
-    # Debug
-    # print(f'Current state = {current_state}, distances = {pointCloud[180]:.2f}, u_d = {u_d:.2f}, w_d = {w_d:.2f}')
+    # Debug print
     
-    print(f'Current state = {current_state}, Distances: FRONT={FRONT_Distance:.2f} m, RIGHT={RIGHT_Distance:.2f} m, Back={BACK_Distance:.2f} m, LEFT={LEFT_Distance:.2f} m')
-    # Repeat all steps while the simulation is running.
+    # print(f'Current state = {current_state}, Distances: FRONT={FRONT_Distance:.2f} m, RIGHT={RIGHT_Distance:.2f} m, Back={BACK_Distance:.2f} m, LEFT={LEFT_Distance:.2f} m')
+
 
